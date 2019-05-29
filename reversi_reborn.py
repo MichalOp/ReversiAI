@@ -18,11 +18,6 @@ SY = 0
 M = 8
 batch = 64
 
-#####################################################
-
-with open("log",'a') as f:
-    f.write(str('---')+'\n')
-
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 config.gpu_options.per_process_gpu_memory_fraction = 0.3
@@ -32,8 +27,6 @@ live_sess = tf.Session(config = config)
 
 saver = tf.train.Saver()
 
-sess.run(tf.global_variables_initializer())
-
 if RESET:
     saver.save(sess,'./Models/model.ckpt')
 else:
@@ -42,7 +35,7 @@ else:
 live_sess.run(tf.global_variables_initializer())
 saver.restore(live_sess,'./Models/model.ckpt')
 
-#####################################################
+
 def convert(board):
     out = np.ndarray([M,M,2])
     #print(out)
@@ -55,6 +48,21 @@ def convert(board):
                 out[i][j][1] = 1
     return np.reshape(out,[M,M,2])
 
+class TaskInterface:
+    def __init__(self, queue, pipe):
+    
+    def execute_task:
+
+class TaskRunner:
+    
+    def generate_endpoint(self):
+        pipe
+        return TaskInterface
+    
+    def __init__(self):
+        se
+        
+
 def train(boards, ys,values, masks,sess = sess):
     masks = np.concatenate([np.reshape(m,[1,M,M,1])for m in masks])
     target = np.concatenate([np.reshape(y,[1,M*M]) for y in ys])
@@ -63,7 +71,7 @@ def train(boards, ys,values, masks,sess = sess):
     values = np.concatenate([np.reshape(np.array(m),[1,1]) for m in values])
     sess.run(train_opt,feed_dict={x:np.reshape(boards,[-1,M*M*3]),value_target:values, y_target:target})
 
-def return_loss(boards, ys,values, masks, sess=sess):
+def return_loss(boards, ys, values, masks, sess=sess):
     masks = np.concatenate([np.reshape(m,[1,M,M,1])for m in masks])
     target = np.concatenate([np.reshape(y,[1,M*M]) for y in ys])
     boards = np.concatenate([np.concatenate([np.reshape(convert(b),[1,M,M,2]) for b in boards]),masks],3)
@@ -128,14 +136,11 @@ def solver():
             process_flag.clear()
 
 
-
 def run_net(board, masks,sess = sess):
     #print (convert(board))
     #print (masks)
     data, value = sess.run(joint,feed_dict={x:np.reshape(np.concatenate([convert(board),masks],2),[1,8*8*3])})
     return np.reshape(data,[M,M]), value
-
-#####################################################
 
 np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
 
