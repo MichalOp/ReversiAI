@@ -10,7 +10,7 @@ import multiprocessing
 import threading
 import datetime
 #####################################################
-RESET = False
+RESET = True
 BOK = 30
 SX = -100
 SY = 0
@@ -24,40 +24,59 @@ s2 = 600
 
 with open("log",'a') as f:
     f.write(str('---')+'\n')
-
+    
 x = tf.placeholder(tf.float32,[None,M*M*3])
 input_layer = tf.reshape(x, [-1,8,8,3])
 
-conv1 = tf.layers.conv2d(
-      inputs=input_layer,
-      filters=128,
-      kernel_size=[3, 3],
-      padding="valid",
-      activation=tf.nn.relu)
+result = tf.keras.layers.Conv2D(
+    filters=32,
+    kernel_size=[3, 3],
+    padding="same",
+    activation=tf.nn.relu)(input_layer)
 
-conv2 = tf.layers.conv2d(
-      inputs=conv1,
-      filters=256,
-      kernel_size=[3, 3],
-      padding="valid",
-      activation=tf.nn.relu)
+for i in range(6):
+    result = tf.keras.layers.Conv2D(
+        filters=32,
+        kernel_size=[3, 3],
+        padding="same",
+        activation=tf.nn.relu)(result)
 
-full_input = tf.reshape(conv2,[-1,4*4*256])
 
-W1 = tf.Variable(tf.random_normal(stddev=0.01,shape = [4*4*256,s1]))#4*4*256
-b1 = tf.Variable(tf.random_normal(stddev=0.01,shape = [1,s1]))
-W2 = tf.Variable(tf.random_normal(stddev=0.01,shape = [s1,s2]))
-b2 = tf.Variable(tf.random_normal(stddev=0.01,shape = [1,s2]))
-W3 = tf.Variable(tf.random_normal(stddev=0.01,shape = [s2,M*M]))
-b3 = tf.Variable(tf.random_normal(stddev=0.01,shape = [1,M*M]))
-W3_value = tf.Variable(tf.random_normal(stddev=0.01,shape = [s2,1]))
-b3_value = tf.Variable(tf.random_normal(stddev=0.01,shape = [1,1]))
+conv_reduce = tf.keras.layers.Conv2D(
+    filters=32,
+    kernel_size=[3, 3],
+    padding="same",
+    activation=tf.nn.relu)(result)
 
-l1 = tf.nn.relu(tf.matmul(full_input,W1)+b1)
-l2 = tf.nn.relu(tf.matmul(l1,W2)+b2)
-probs = tf.nn.softmax(tf.matmul(l2,W3)+b3)
+conv_reduce2 = tf.keras.layers.Conv2D(
+    filters=32,
+    kernel_size=[3, 3],
+    padding="valid",
+    activation=tf.nn.relu)(conv_reduce)
 
-value = tf.nn.sigmoid(tf.matmul(l2,W3_value)+b3_value)
+conv_reduce3 = tf.keras.layers.Conv2D(
+    filters=32,
+    kernel_size=[3, 3],
+    padding="valid",
+    activation=tf.nn.relu)(conv_reduce2)
+
+conv_reduce4 = tf.keras.layers.Conv2D(
+    filters=32,
+    kernel_size=[3, 3],
+    padding="valid",
+    activation=tf.nn.relu)(conv_reduce3)
+
+
+conv_probs = tf.keras.layers.Conv2D(
+    filters=1,
+    kernel_size=[3, 3],
+    padding="same",
+    activation=tf.nn.relu)(result)
+
+probs = tf.nn.softmax(tf.keras.layers.Flatten()(conv_probs))
+
+intermediate = tf.keras.layers.Dense(256,activation=tf.nn.relu)(tf.keras.layers.Flatten()(conv_reduce4))
+value = tf.keras.layers.Dense(1,activation=tf.nn.sigmoid)(intermediate)
 
 joint = tf.tuple([probs,value])
 
@@ -244,11 +263,11 @@ class Board:
     def moves(self, player, debug = False):
         res = []
         for (x,y) in self.edge:
-            #if (x,y) == (7,1) and debug:
-                #print("here we go with debug")
-                #for direction in Board.dirs:
-                #    print(direction)
-                #    print(self.can_beat(x,y, direction, player))
+            if (x,y) == (7,1) and debug:
+                print("here we go with debug")
+                for direction in Board.dirs:
+                    print(direction)
+                    print(self.can_beat(x,y, direction, player))
             if any( self.can_beat(x,y, direction, player) for direction in Board.dirs):
                 res.append( (x,y) )
         if not res:
@@ -382,13 +401,35 @@ def reverse_board(board):
             if not board[i][j]== None:
                 board[i][j] = 1-board[i][j]
 
-
-
-def generateMoveProbs(board, player):
+def generateMoveProbs(board, player, debug = False):
     moves = board.moves(player)
     b = copyboard(board.board)
     if player == 1:
         reverse_board(b)
+    
+    if debug:
+        for i in range(M):
+            res = ""
+            for j in range(M):
+                b_ = b[i][j]
+                if b_ == None:
+                    res += '.'
+                elif b_ == 1:
+                    res += '#'
+                else:
+                    res += 'o'
+            print(res)
+        playable = generate_playable_fields(moves)
+        for i in range(M):
+            res = ""
+            for j in range(M):
+                b_ = playable[i][j][0]
+                if b_ == 1:
+                    res += 'p'
+                else:
+                    res += '.'
+            print(res)
+    
     probs, value = run_net_async(b,generate_playable_fields(moves))
     #print(probs)
     #print(value)
@@ -594,6 +635,7 @@ def run_train_game():
     while not board.terminal():
         #print(str(threading.current_thread().name))
         iteration+=1
+        generateMoveProbs(board,root.player,True)
         #board.draw()
         #print(root.value)
         #print(root.q)
@@ -717,13 +759,13 @@ def train_full(board):
     #test_training()
     global total_dataset
     global game_stories_queue
-    #import cProfile
-    #cProfile.run('run_train_game()')
+    
+    
 
     for i in range(3):
         time_old = datetime.datetime.now()
         threads = []
-        for i in range(8):
+        for i in range(1):
             print("launching simulation thread "+str(i))
             thread = threading.Thread(target = run_train_game)
             thread.start()
