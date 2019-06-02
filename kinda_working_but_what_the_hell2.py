@@ -1,188 +1,23 @@
 import random
 import sys
 from collections import defaultdict as dd
-import tensorflow as tf
 import numpy as np
 from copy import deepcopy
 from queue import Queue
 import math
-import multiprocessing
-import threading
+import multiprocessing as mp
 import datetime
+from time import sleep
 #####################################################
+
 RESET = True
 BOK = 30
 SX = -100
 SY = 0
 M = 8
 batch = 64
-
-#####################################################
-
-s1 = 600
-s2 = 600
-
-with open("log",'a') as f:
-    f.write(str('---')+'\n')
-    
-x = tf.placeholder(tf.float32,[None,M*M*3])
-input_layer = tf.reshape(x, [-1,8,8,3])
-
-result = tf.keras.layers.Conv2D(
-    filters=32,
-    kernel_size=[3, 3],
-    padding="same",
-    activation=tf.nn.relu)(input_layer)
-
-for i in range(6):
-    result = tf.keras.layers.Conv2D(
-        filters=32,
-        kernel_size=[3, 3],
-        padding="same",
-        activation=tf.nn.relu)(result)
-
-
-conv_reduce = tf.keras.layers.Conv2D(
-    filters=32,
-    kernel_size=[3, 3],
-    padding="same",
-    activation=tf.nn.relu)(result)
-
-conv_reduce2 = tf.keras.layers.Conv2D(
-    filters=32,
-    kernel_size=[3, 3],
-    padding="valid",
-    activation=tf.nn.relu)(conv_reduce)
-
-conv_reduce3 = tf.keras.layers.Conv2D(
-    filters=32,
-    kernel_size=[3, 3],
-    padding="valid",
-    activation=tf.nn.relu)(conv_reduce2)
-
-conv_reduce4 = tf.keras.layers.Conv2D(
-    filters=32,
-    kernel_size=[3, 3],
-    padding="valid",
-    activation=tf.nn.relu)(conv_reduce3)
-
-
-conv_probs = tf.keras.layers.Conv2D(
-    filters=1,
-    kernel_size=[3, 3],
-    padding="same",
-    activation=tf.nn.relu)(result)
-
-probs = tf.nn.softmax(tf.keras.layers.Flatten()(conv_probs))
-
-intermediate = tf.keras.layers.Dense(256,activation=tf.nn.relu)(tf.keras.layers.Flatten()(conv_reduce4))
-value = tf.keras.layers.Dense(1,activation=tf.nn.sigmoid)(intermediate)
-
-joint = tf.tuple([probs,value])
-
-y_target = tf.placeholder(tf.float32,[None,M*M])
-value_target = tf.placeholder(tf.float32,[None,1])
-train_target = tf.placeholder(tf.float32,[None,M*M])
-
-true_loss = tf.nn.l2_loss(y_target-probs) + tf.nn.l2_loss(value-value_target)
-
-loss = true_loss + tf.reduce_sum([tf.nn.l2_loss(x)for x in tf.global_variables()])*0.0001
-
-opt = tf.train.AdamOptimizer(0.0003)
-train_opt = opt.minimize(loss)
-
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True
-config.gpu_options.per_process_gpu_memory_fraction = 0.3
-
-sess = tf.Session(config = config)
-live_sess = tf.Session(config = config)
-
-saver = tf.train.Saver()
-
-sess.run(tf.global_variables_initializer())
-
-
-
-if RESET:
-    saver.save(sess,'./Models/model.ckpt')
-else:
-    saver.restore(sess,'./Models/model.ckpt')
-
-live_sess.run(tf.global_variables_initializer())
-saver.restore(live_sess,'./Models/model.ckpt')
-
-#####################################################
-def convert(board):
-    out = np.ndarray([M,M,2])
-    #print(out)
-    out.fill(0)
-    for i in range(M):
-        for j in range(M):
-            if board[i][j] == 0:
-                out[i][j][0] = 1
-            if board[i][j] == 1:
-                out[i][j][1] = 1
-    return np.reshape(out,[M,M,2])
-
-def train(boards, ys,values, masks,sess = sess):
-    masks = np.concatenate([np.reshape(m,[1,M,M,1])for m in masks])
-    target = np.concatenate([np.reshape(y,[1,M*M]) for y in ys])
-    boards = np.concatenate([np.concatenate([np.reshape(convert(b),[1,M,M,2]) for b in boards]),masks],3)
-    #print(boards)
-    values = np.concatenate([np.reshape(np.array(m),[1,1]) for m in values])
-    sess.run(train_opt,feed_dict={x:np.reshape(boards,[-1,M*M*3]),value_target:values, y_target:target})
-
-def return_loss(boards, ys,values, masks, sess=sess):
-    masks = np.concatenate([np.reshape(m,[1,M,M,1])for m in masks])
-    target = np.concatenate([np.reshape(y,[1,M*M]) for y in ys])
-    boards = np.concatenate([np.concatenate([np.reshape(convert(b),[1,M,M,2]) for b in boards]),masks],3)
-    #print(boards)
-    values = np.concatenate([np.reshape(np.array(m),[1,1]) for m in values])
-    return sess.run(true_loss,feed_dict={x:np.reshape(boards,[-1,M*M*3]),value_target:values, y_target:target})
-
-network_tasks = Queue()
-answer_dictionary = {}
-process_flag = threading.Event()
-
-def solver(worker_list, task_queue):
-
-
-    while True:
-        process_flag.wait()
-        boards = []
-        masks = []
-        locks = []
-        threads = []
-
-        while not task_queue.empty():
-            l,t,b,m = network_tasks.get()
-            boards.append(b)
-            masks.append(m)
-            locks.append(l)
-            threads.append(t)
-
-        if len(masks)>0:
-            #print("gpu launch with "+str(len(masks))+" boards")
-            masks = np.concatenate([np.reshape(m,[1,M,M,1])for m in masks])
-            boards = np.concatenate([np.concatenate([np.reshape(convert(b),[1,M,M,2]) for b in boards]),masks],3)
-
-            probs, values = live_sess.run(joint,feed_dict={x:np.reshape(boards,[-1,M*M*3])})
-
-            for i in range(len(threads)):
-                answer_dictionary[threads[i]] = (np.reshape(probs[i],[M,M]),values[i])
-                locks[i].set()
-
-        if network_tasks.empty():
-            process_flag.clear()
-
-
-
-def run_net(board, masks,sess = sess):
-    #print (convert(board))
-    #print (masks)
-    data, value = sess.run(joint,feed_dict={x:np.reshape(np.concatenate([convert(board),masks],2),[1,8*8*3])})
-    return np.reshape(data,[M,M]), value
+tries = 500
+choose_best_prob = 0.9
 
 #####################################################
 
@@ -329,10 +164,8 @@ class Board:
 
 player = 0
 B = Board()
-tries = 500
-choose_best_prob = 0.9
 
-def flip_board(self,board):
+def flip_board(board):
     new_board = deepcopy(board)
     for i in range(M):
         for j in range(M):
@@ -352,6 +185,12 @@ def rotate_board(board):
         for j in range(M):
             new_board[i][j] = board[M-i-1][M-j-1]
     return new_board
+
+def reverse_board(board):
+    for i in range(M):
+        for j in range(M):
+            if not board[i][j]== None:
+                board[i][j] = 1-board[i][j]
 
 class Node:
     def __init__(self, player, board, move_probs, value):
@@ -375,23 +214,27 @@ class Node:
 
 class Worker:
     
-    def __init__ (self, worker_id, task_queue, result_pipe, data_queue):
+    def __init__ (self, worker_id, task_queue, result_pipe, data_queue, run_flag):
         self.worker_id = worker_id
         self.task_queue = task_queue
         self.result_pipe = result_pipe
         self.data_queue = data_queue
+        self.run_flag = run_flag
+        
+        if not self.run_flag == None:
+            self.run()
+            
+    def run(self):
+        while self.run_flag.value != 0:
+            if self.run_flag.value == 1:
+                self.run_train_game()
+            else:
+                sleep(0.1)
     
     def run_net_async(self,board,masks):
 
-        lock_flag = threading.Event()
-        global network_tasks
-        network_tasks.put((lock_flag,threading.current_thread(),board,masks))
-        process_flag.set()
-        lock_flag.wait()
-        global answer_dictionary
-        out = answer_dictionary[threading.current_thread()]
-        del answer_dictionary[threading.current_thread()]
-        return out
+        self.task_queue.put((self.worker_id,board,masks))
+        return self.result_pipe.recv()
 
     def generate_playable_fields(self,moves):
         fields = np.ndarray([M,M,1])
@@ -402,12 +245,6 @@ class Worker:
                 fields[move[0]][move[1]][0] = 1
         return fields
 
-    def reverse_board(self,board):
-        for i in range(M):
-            for j in range(M):
-                if not board[i][j]== None:
-                    board[i][j] = 1-board[i][j]
-
     def generateMoveProbs(self,board, player, debug = False):
         moves = board.moves(player)
         b = copyboard(board.board)
@@ -415,7 +252,7 @@ class Worker:
             reverse_board(b)
         
         if debug:
-            playable = generate_playable_fields(moves)
+            playable = self.generate_playable_fields(moves)
             for i in range(M):
                 res = ""
                 for j in range(M):
@@ -433,7 +270,7 @@ class Worker:
                         res += 'o'
                 print(res)
         
-        probs, value = run_net_async(b,generate_playable_fields(moves))
+        probs, value = self.run_net_async(b,self.generate_playable_fields(moves))
         #print(probs)
         #print(value)
         ps = []
@@ -475,7 +312,7 @@ class Worker:
         if new_node == None and not node.board.terminal():
             new_board = Board(node.board)
             new_board.do_move(move,node.player)
-            probs, value = generateMoveProbs(new_board,1-node.player)
+            probs, value = self.generateMoveProbs(new_board,1-node.player)
             value = float(value)
             new_node = Node(1-node.player,new_board,probs,value)
             new_node.W = 1 - new_node.value
@@ -492,7 +329,7 @@ class Worker:
                 else:
                     value = 0
             else:
-                value = 1-pass_tree(new_node)
+                value = 1-self.pass_tree(new_node)
 
         node.W += 1 - value
         node.q = node.W/node.visits
@@ -502,7 +339,7 @@ class Worker:
     def monte_carlo_search(self, root, randomness):
 
         for i in range(tries):
-            pass_tree(root)
+            self.pass_tree(root)
 
         node = root
 
@@ -538,11 +375,9 @@ class Worker:
 
         return move, new_node, node.board.board, probs_board, node.player
 
-    total_dataset = []
-
     def run_test_game_with_montecarlo(self):
         board = Board()
-        probs, value = generateMoveProbs(board,0)
+        probs, value = self.generateMoveProbs(board,0)
         value = float(value)
         #print(value)
         root = Node(0,board,probs, value)
@@ -558,7 +393,7 @@ class Worker:
 
                 print(root.value)
                 print(root.q)
-                move, new_node, current_board, monte_carlo_probs, current_player = monte_carlo_search(root,True)
+                move, new_node, current_board, monte_carlo_probs, current_player = self.monte_carlo_search(root,True)
 
                 board.do_move(move, player)
                 root = new_node
@@ -575,7 +410,7 @@ class Worker:
     
     def run_train_game(self):
         board = Board()
-        probs, value = generateMoveProbs(board,0)
+        probs, value = self.generateMoveProbs(board,0)
         value = float(value)
         #print(value)
         root = Node(0,board,probs, value)
@@ -590,17 +425,17 @@ class Worker:
         while not board.terminal():
             #print(str(threading.current_thread().name))
             iteration+=1
-            generateMoveProbs(board,root.player,True)
+            self.generateMoveProbs(board,root.player,True)
             #board.draw()
             #print(root.value)
             #print(root.q)
-            fields = generate_playable_fields(board.moves(root.player))
-            move, new_node, current_board, monte_carlo_probs, current_player = monte_carlo_search(root,iteration<15)
+            fields = self.generate_playable_fields(board.moves(root.player))
+            move, new_node, current_board, monte_carlo_probs, current_player = self.monte_carlo_search(root,iteration<15)
 
             b = copyboard(current_board)
             if root.player == 1:
                 reverse_board(b)
-            x, y = run_net(b,fields)
+            #x, y = run_net(b,fields)
             #print(x * np.reshape(fields,[M,M]) - 1 + np.reshape(fields,[M,M]))
             #print(current_player)
             _game_story.append((copyboard(current_board),fields,monte_carlo_probs,current_player))
@@ -626,9 +461,7 @@ class Worker:
             #    print(c)
             game_story.append((c,f,m,abs(winner-p)))
 
-        global game_stories_queue
-
-        game_stories_queue.put(game_story)
+        self.data_queue.put(game_story)
         
     def run_game_against_me(self):
         board = Board()
@@ -640,7 +473,7 @@ class Worker:
                 moves = board.moves(player)
                 b = deepcopy(board.board)
                 reverse_board(b)
-                probs, val = run_net(b,generate_playable_fields(moves),live_sess)
+                probs, val = run_net_async(b,generate_playable_fields(moves))
                 best = None
                 highest = -1
                 ps = []
@@ -692,85 +525,6 @@ class Worker:
 
         #print(board.result())
         return board.result() < 0
-    
-    def run_game_against_kasia(self):
-        board = Board()
-        board.draw()
-        probs, value = generateMoveProbs(board,0)
-        value = float(value)
-        #print(value)
-        root = Node(0,board,probs, value)
-        root.q = root.value
-
-        player = 0
-        me = int(input("What player are We?:"))
-        continuing_from_point = 1
-        while not board.terminal():
-
-            #board.draw()
-
-            if player == me:
-                if continuing_from_point == 0:
-                    #print(root.value)
-                    #print(root.q)
-                    move, new_node, current_board, monte_carlo_probs, current_player = monte_carlo_search(root,False)
-                    if move != None:
-                        print("Our Move, click carefully please:")
-                        print((move[0]+1,move[1]+1))
-                    print(root.q)
-                    #print(root.value)
-                    board.do_move(move, player)
-                    root = new_node
-                else:
-                    move = None
-                    print("those are valid moves")
-                    print([(move[0]+1,move[1]+1) for move in board.moves(player,True)])
-                    print(board.move_list)
-                    while not move in board.moves(player):
-                        move = tuple([int(x)-1 for x in input("Our move for continuation, don't fail with typing that:").strip().split()])
-                        print(move)
-                    if root.stepdown(move)==None:
-                        new_board = Board(root.board)
-                        new_board.do_move(move,root.player)
-                        probs, value = generateMoveProbs(new_board,1-root.player)
-                        value = float(value)
-                        new_node = Node(1-root.player,new_board,probs,value)
-                        new_node.W = 1 - new_node.value
-                        new_node.q = 1 - new_node.value
-                        root.expand(move,new_node)
-                    
-                    root = root.stepdown(move)
-                    
-                    board.do_move(move,player)
-
-                    continuing_from_point = int(input("should we still read?").strip())
-                #player = 1-player
-
-            else:
-                move = None
-                print("those are valid moves")
-                if len(board.moves(player))>0:
-                    print([(move[0]+1,move[1]+1) for move in board.moves(player)])
-                    while not move in board.moves(player):
-                        move = tuple([int(x)-1 for x in input("Kasia's Move, don't fail with typing that:").strip().split()])
-                        print(move)
-                print(board.move_list)
-                if root.stepdown(move)==None:
-                    new_board = Board(root.board)
-                    new_board.do_move(move,root.player)
-                    probs, value = generateMoveProbs(new_board,1-root.player)
-                    value = float(value)
-                    new_node = Node(1-root.player,new_board,probs,value)
-                    new_node.W = 1 - new_node.value
-                    new_node.q = 1 - new_node.value
-                    root.expand(move,new_node)
-                root = root.stepdown(move)
-                board.do_move(move,player)
-            player = 1-player
-            board.draw()
-        
-        print(board.result())
-        return board.result()<0
 
 def test_training():
     co = 0
@@ -781,63 +535,6 @@ def test_training():
             co+=1
     print(co)
     return co>550
-
-total_runs = 0
-
-def train_full(board):
-    #test_training()
-    global total_dataset
-    global game_stories_queue
-    
-    
-
-    for i in range(3):
-        time_old = datetime.datetime.now()
-        threads = []
-        for i in range(1):
-            print("launching simulation thread "+str(i))
-            thread = threading.Thread(target = run_train_game)
-            thread.start()
-            threads.append(thread)
-
-
-        for i in range(len(threads)):
-            print("awaiting thread "+str(i))
-            threads[i].join()
-
-        while not game_stories_queue.empty():
-            total_dataset += game_stories_queue.get()
-        print("COLLECT TIME: "+ str(datetime.datetime.now()-time_old))
-
-    print(f"DATASET_SIZE:{len(total_dataset)}")
-    while len(total_dataset)>500000:
-        del total_dataset[0]
-    if len(total_dataset)>50000:
-        for i in range(min(max(100,len(total_dataset)//100),2000)):
-            print(i)
-            arr = random.sample(total_dataset,min(batch,len(total_dataset)))
-
-            bs = []
-            fs = []
-            ms = []
-            vs = []
-
-            for b,f,m,v in arr:
-                bs.append(b)
-                fs.append(f)
-                ms.append(m)
-                vs.append(v)
-
-            #print(fs)
-            print(return_loss(bs,ms,vs,fs))
-            train(bs,ms,vs,fs)
-    global total_runs
-    total_runs+=1
-
-    #if test_training() or total_runs<3:
-    print("UPDATING")
-    saver.save(sess,'./Models/model.ckpt')
-    saver.restore(live_sess,'./Models/model.ckpt')
 
 '''
 wins = 0
@@ -850,21 +547,40 @@ for i in range(1000):
 print(wins)
 '''
 
-train_list = []
+def test(net):
+    co = 0
+    for i in range(1000):
+        if i%10 == 0:
+            print(i/10)
+        if run_game(net):
+            co+=1
+    print('wins: '+str(co))
+    with open("log",'a') as f:
+        f.write(str(co)+'\n')
 
+def run_worker(worker_id, task_queue, result_pipe, data_queue, run_flag):
+    w = Worker(worker_id, task_queue, result_pipe, data_queue, run_flag)
 
+def generate_playable_fields(moves):
+    fields = np.ndarray([M,M,1])
+    fields.fill(0)
+    if not moves[0] == None:
+        for move in moves:
+            #print(move)
+            fields[move[0]][move[1]][0] = 1
+    return fields
 
-def run_game():
+def run_game(net):
     board = Board()
     player = 0
     while not board.terminal():
-
+        
         m = None
         if player == 1:
             m = board.random_move(player)
         else:
             moves = board.moves(player)
-            probs, val = run_net(board.board,generate_playable_fields(moves),live_sess)
+            probs, val = net.run_net(board.board,generate_playable_fields(moves))
             weighted_moves = []
             best = None
             highest = -1
@@ -875,66 +591,86 @@ def run_game():
                         highest = probs[move[0]][move[1]]
                         best = move
             m = best
-
+            
         board.do_move(m,player)
         player = 1-player
-
+    
     #print(board.result())
     return board.result() < 0
 
-def test():
-    co = 0
-    for i in range(1000):
-        if i%10 == 0:
-            print(i/10)
-        if run_game():
-            co+=1
-    print('wins: '+str(co))
-    with open("log",'a') as f:
-        f.write(str(co)+'\n')
-'''
+def init_workers(n):
+    worker_flag = mp.Value('i', 1)
+    
+    task_queue = mp.Queue()
+    data_queue = mp.Queue()
+    
+    workers = []
+    for i in range(n):
+        end_a, end_b = mp.Pipe()
+        workers.append(end_a)
+        mp.Process(target=run_worker, args=(i,task_queue,end_b,data_queue,worker_flag)).start()
+                
+    return task_queue, data_queue, workers,worker_flag
 
-wins = 0
 
-for i in range(100):
-    if run_test_game_with_montecarlo():
-        print("win")
-        wins+=1
 
-print("#########################################################")
-print(wins)
-with open("wins",'w') as f:
-    f.write(str(wins)+'\n')
-print("#########################################################")
-'''
-thread = threading.Thread(target = solver)
-thread.start()
+def train():
+    
+    task_queue,data_queue,workers,worker_flag = init_workers(24)
+    
+    import network_basic as net
+    #test(net)
+    total_runs = 0
+    total_dataset = []
+    while True:
 
-#run_game_against_kasia()
+        for i in range(3):
+            collected = 0
+            
+            time_old = datetime.datetime.now()
+            while collected < 24:
+                
+                for v in range(1000):
+                    net.solver(workers,task_queue)
+                
+                while not data_queue.empty():
+                    collected += 1
+                    total_dataset += data_queue.get()
+                    sleep(0.01)
+                sleep(0.1)
+                
+            print("COLLECT TIME: "+ str(datetime.datetime.now()-time_old))
 
-while True:
+            print(f"DATASET_SIZE:{len(total_dataset)}")
+            while len(total_dataset)>500000:
+                del total_dataset[0]
+            if len(total_dataset)>50000:
+                for i in range(min(max(100,len(total_dataset)//100),2000)):
+                    print(i)
+                    arr = random.sample(total_dataset,min(batch,len(total_dataset)))
 
-    #do_train_step(tasks.get())
-    for i in range(3):
-        train_full(Board())
-    #if run%500 == 0:
-    test()
+                    bs = []
+                    fs = []
+                    ms = []
+                    vs = []
 
-'''
-while True:
-    B.draw()
-    #B.show()
-    m = B.random_move(player)
-    B.do_move(m, player)
-    player = 1-player
-    #input()
-    if B.terminal():
-        break
+                    for b,f,m,v in arr:
+                        bs.append(b)
+                        fs.append(f)
+                        ms.append(m)
+                        vs.append(v)
 
-B.draw()
-#B.show()
-print ('Result '+ str(B.result()))
-print('Game over!')
-'''
+                    #print(fs)
+                    print(net.return_loss(bs,ms,vs,fs))
+                    net.train(bs,ms,vs,fs)
+            total_runs+=1
 
-sys.exit(0)
+            #if test_training() or total_runs<3:
+            print("UPDATING")
+            net.saver.save(net.sess,'./Models/model.ckpt')
+            net.saver.restore(net.live_sess,'./Models/model.ckpt')
+
+        #if run%500 == 0:
+        test(net)
+
+train()
