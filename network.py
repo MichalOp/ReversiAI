@@ -89,3 +89,7 @@ class NetworkModule:
         _,true_loss,regularizer =  self.sess.run([self.train_opt,self.true_loss,self.regularizer],
                                 feed_dict={self.x:batch,self.value_target:values, self.y_target:target})
         return true_loss,regularizer
+    
+    def run_net(board, masks,net):
+    data, value = sess.run(joint,feed_dict={x:np.reshape(np.concatenate([convert(board),masks],2),[1,8*8*3])})
+    return np.reshape(data,[M,M]), value

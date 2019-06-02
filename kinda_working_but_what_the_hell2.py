@@ -225,6 +225,7 @@ class Worker:
             self.run()
             
     def run(self):
+        np.random.seed(self.worker_id)
         while self.run_flag.value != 0:
             if self.run_flag.value == 1:
                 self.run_train_game()
@@ -372,7 +373,7 @@ class Worker:
             index = np.random.choice(range(len(probs)),1,p = probs)[0]
         move = moves[index]
         new_node = node.stepdown(move)
-
+        #print(move)
         return move, new_node, node.board.board, probs_board, node.player
 
     def run_test_game_with_montecarlo(self):
@@ -425,7 +426,7 @@ class Worker:
         while not board.terminal():
             #print(str(threading.current_thread().name))
             iteration+=1
-            self.generateMoveProbs(board,root.player,True)
+            #self.generateMoveProbs(board,root.player,True)
             #board.draw()
             #print(root.value)
             #print(root.q)
@@ -616,7 +617,7 @@ def init_workers(n):
 
 def train():
     
-    task_queue,data_queue,workers,worker_flag = init_workers(24)
+    task_queue,data_queue,workers,worker_flag = init_workers(32)
     
     import network_basic as net
     #test(net)
@@ -624,11 +625,11 @@ def train():
     total_dataset = []
     while True:
 
-        for i in range(3):
+        for i in range(5):
             collected = 0
             
             time_old = datetime.datetime.now()
-            while collected < 24:
+            while collected < 32:
                 
                 for v in range(1000):
                     net.solver(workers,task_queue)
@@ -637,7 +638,7 @@ def train():
                     collected += 1
                     total_dataset += data_queue.get()
                     sleep(0.01)
-                sleep(0.1)
+                sleep(0.01)
                 
             print("COLLECT TIME: "+ str(datetime.datetime.now()-time_old))
 
