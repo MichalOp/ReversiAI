@@ -10,14 +10,18 @@ import datetime
 from time import sleep
 #####################################################
 
-RESET = True
-BOK = 30
-SX = -100
-SY = 0
 M = 8
+tries = 400
 batch = 64
-tries = 500
 choose_best_prob = 0.9
+
+def save_stats(stats):
+    out = str()
+    for s in stats:
+        s+= " " + out
+    
+    with open('stats','a') as f:
+        f.write(s+"\n")
 
 #####################################################
 
@@ -297,9 +301,9 @@ class Worker:
         for i in range(len(moves)):
             if moves[i] in node.moves:
                 child = node.moves[moves[i]]
-                probs[i] = probs[i] *math.sqrt(node.visits)/(child.visits+1) + 2*child.q-1
+                probs[i] = probs[i] * math.sqrt(node.visits)/(child.visits+1) + 2*child.q-1
             else:
-                probs[i] = probs[i]*math.sqrt(node.visits)
+                probs[i] = probs[i] * math.sqrt(node.visits)
 
         target = np.argmax(probs)
         move = moves[target]
@@ -341,7 +345,8 @@ class Worker:
 
         for i in range(tries):
             self.pass_tree(root)
-
+        
+        
         node = root
 
         node.visits+=1
@@ -372,6 +377,8 @@ class Worker:
         else:
             index = np.random.choice(range(len(probs)),1,p = probs)[0]
         move = moves[index]
+        
+        #print(f"value: {node.value} start probs: {node.move_probs[1][index]}, end probs: {probs[index]}")
         new_node = node.stepdown(move)
         #print(move)
         return move, new_node, node.board.board, probs_board, node.player
@@ -548,16 +555,15 @@ for i in range(1000):
 print(wins)
 '''
 
-def test(net):
+def test(net,runs):
     co = 0
-    for i in range(1000):
+    for i in range(runs):
         if i%10 == 0:
             print(i/10)
         if run_game(net):
             co+=1
-    print('wins: '+str(co))
-    with open("log",'a') as f:
-        f.write(str(co)+'\n')
+            
+    return co/runs
 
 def run_worker(worker_id, task_queue, result_pipe, data_queue, run_flag):
     w = Worker(worker_id, task_queue, result_pipe, data_queue, run_flag)
@@ -613,7 +619,21 @@ def init_workers(n):
                 
     return task_queue, data_queue, workers,worker_flag
 
+def sample(data):
+    arr = random.sample(data,min(batch,len(data)))
 
+    bs = []
+    fs = []
+    ms = []
+    vs = []
+
+    for b,f,m,v in arr:
+        bs.append(b)
+        fs.append(f)
+        ms.append(m)
+        vs.append(v)
+    
+    return bs,fs,ms,vs
 
 def train():
     
@@ -645,25 +665,19 @@ def train():
             print(f"DATASET_SIZE:{len(total_dataset)}")
             while len(total_dataset)>500000:
                 del total_dataset[0]
-            if len(total_dataset)>50000:
-                for i in range(min(max(100,len(total_dataset)//100),2000)):
+            if len(total_dataset)>0:
+                for i in range(min(max(100,len(total_dataset)//100),2000)*2):
                     print(i)
-                    arr = random.sample(total_dataset,min(batch,len(total_dataset)))
+                    
+                    bs,fs,ms,vs = sample(total_dataset)
 
-                    bs = []
-                    fs = []
-                    ms = []
-                    vs = []
-
-                    for b,f,m,v in arr:
-                        bs.append(b)
-                        fs.append(f)
-                        ms.append(m)
-                        vs.append(v)
-
-                    #print(fs)
-                    print(net.return_loss(bs,ms,vs,fs))
-                    net.train(bs,ms,vs,fs)
+                    (_,loss) = net.train(bs,ms,vs,fs)
+                    print(loss)
+            
+            bs,fs,ms,vs = sample(total_dataset)
+            
+            net.generate_summary(bs,fs,ms,vs,test(net,200))
+                
             total_runs+=1
 
             #if test_training() or total_runs<3:
@@ -672,6 +686,6 @@ def train():
             net.saver.restore(net.live_sess,'./Models/model.ckpt')
 
         #if run%500 == 0:
-        test(net)
+        
 
 train()
