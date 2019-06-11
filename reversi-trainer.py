@@ -11,7 +11,7 @@ from time import sleep
 #####################################################
 
 M = 8
-tries = 400
+tries = 5
 batch = 64
 choose_best_prob = 0.9
 
@@ -218,14 +218,14 @@ class Node:
 
 class Worker:
     
-    def __init__ (self, worker_id, task_queue, result_pipe, data_queue, run_flag):
+    def __init__ (self, worker_id, task_queue, result_pipe, data_queue, run_flag, start):
         self.worker_id = worker_id
         self.task_queue = task_queue
         self.result_pipe = result_pipe
         self.data_queue = data_queue
         self.run_flag = run_flag
         
-        if not self.run_flag == None:
+        if start:
             self.run()
             
     def run(self):
@@ -390,31 +390,44 @@ class Worker:
         #print(value)
         root = Node(0,board,probs, value)
         root.q = root.value
-
+        us = random.randrange(0,2)
         player = 0
 
         while not board.terminal():
 
-            board.draw()
+            #board.draw()
 
-            if player == 0:
+            if player == us:
 
-                print(root.value)
-                print(root.q)
+                #print(root.value)
+                #print(root.q)
                 move, new_node, current_board, monte_carlo_probs, current_player = self.monte_carlo_search(root,True)
 
                 board.do_move(move, player)
                 root = new_node
+                
                 #player = 1-player
-
             else:
                 move = board.random_move(player)
-                root = root.stepdown(move)
+                new_root = root.stepdown(move)
+                
+                if new_root == None and not root.board.terminal():
+                    new_board = Board(root.board)
+                    new_board.do_move(move,root.player)
+                    probs, value = self.generateMoveProbs(new_board,1-root.player)
+                    value = float(value)
+                    new_root = Node(1-root.player,new_board,probs,value)
+                    new_root.W = 1 - new_root.value
+                    new_root.q = 1 - new_root.value
+                    root.expand(move,new_root)
+                    
+                root = new_root
+
                 board.do_move(move,player)
             player = 1-player
-        board.draw()
-        print(board.result())
-        return board.result()<0
+        #board.draw()
+        #print(board.result())
+        return (board.result() < 0 and us==0) or (board.result() > 0 and us==1) 
     
     def run_train_game(self):
         board = Board()
@@ -533,6 +546,17 @@ class Worker:
 
         #print(board.result())
         return board.result() < 0
+    
+    def test(self):
+        tries = 50
+        runs = 1000
+        co = 0
+        for i in range(runs):
+            if i%10 == 0:
+                print(i/10)
+            if self.run_test_game_with_montecarlo():
+                co+=1
+        print(co/runs)
 
 def test_training():
     co = 0
@@ -566,8 +590,12 @@ def test(net,runs):
     return co/runs
 
 def run_worker(worker_id, task_queue, result_pipe, data_queue, run_flag):
-    w = Worker(worker_id, task_queue, result_pipe, data_queue, run_flag)
+    w = Worker(worker_id, task_queue, result_pipe, data_queue, run_flag,True)
 
+def run_tester(worker_id, task_queue, result_pipe, data_queue, run_flag):
+    w = Worker(worker_id, task_queue, result_pipe, data_queue, run_flag,False)
+    w.test()
+    
 def generate_playable_fields(moves):
     fields = np.ndarray([M,M,1])
     fields.fill(0)
@@ -579,15 +607,19 @@ def generate_playable_fields(moves):
 
 def run_game(net):
     board = Board()
+    our_player = random.randrange(0,2)
     player = 0
     while not board.terminal():
         
         m = None
-        if player == 1:
+        if player != our_player:
             m = board.random_move(player)
         else:
             moves = board.moves(player)
-            probs, val = net.run_net(board.board,generate_playable_fields(moves))
+            bo = copyboard(board.board)
+            if player == 1:
+                reverse_board(bo)
+            probs, val = net.run_net(bo,generate_playable_fields(moves))
             weighted_moves = []
             best = None
             highest = -1
@@ -603,10 +635,10 @@ def run_game(net):
         player = 1-player
     
     #print(board.result())
-    return board.result() < 0
+    return (board.result() < 0 and our_player==0) or (board.result() > 0 and our_player==1) 
 
 def init_workers(n):
-    worker_flag = mp.Value('i', 1)
+    worker_flag = mp.Value('i', 0)
     
     task_queue = mp.Queue()
     data_queue = mp.Queue()
@@ -616,6 +648,19 @@ def init_workers(n):
         end_a, end_b = mp.Pipe()
         workers.append(end_a)
         mp.Process(target=run_worker, args=(i,task_queue,end_b,data_queue,worker_flag)).start()
+                
+    return task_queue, data_queue, workers,worker_flag
+
+def init_tester():
+    worker_flag = mp.Value('i', 1)
+    
+    task_queue = mp.Queue()
+    data_queue = mp.Queue()
+    
+    workers = []
+    end_a, end_b = mp.Pipe()
+    workers.append(end_a)
+    mp.Process(target=run_tester, args=(0,task_queue,end_b,data_queue,worker_flag)).start()
                 
     return task_queue, data_queue, workers,worker_flag
 
@@ -634,6 +679,21 @@ def sample(data):
         vs.append(v)
     
     return bs,fs,ms,vs
+
+def simple_test():
+    import network_basic as net
+    print(test(net,1000))
+
+def test_with_montecarlo():
+    task_queue,data_queue,workers,worker_flag = init_tester()
+    
+    import network_basic as net
+    #test(net)
+    total_runs = 0
+    total_dataset = []
+    while(True):
+        net.solver(workers,task_queue)
+        sleep(0.00001)
 
 def train():
     
@@ -686,6 +746,8 @@ def train():
                 net.saver.restore(net.live_sess,'./Models/model.ckpt')
 
         #if run%500 == 0:
-        
+    
+test_with_montecarlo()
+simple_test()
 
-train()
+#train()
