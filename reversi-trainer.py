@@ -649,7 +649,7 @@ def train():
             collected = 0
             
             time_old = datetime.datetime.now()
-            while collected < 32:
+            while collected < 64:
                 
                 for v in range(1000):
                     net.solver(workers,task_queue)
@@ -665,25 +665,25 @@ def train():
             print(f"DATASET_SIZE:{len(total_dataset)}")
             while len(total_dataset)>500000:
                 del total_dataset[0]
-            if len(total_dataset)>0:
-                for i in range(min(max(100,len(total_dataset)//100),2000)*2):
+            if len(total_dataset)>50000:
+                for i in range(min(max(100,len(total_dataset)//100),2000)):
                     print(i)
                     
                     bs,fs,ms,vs = sample(total_dataset)
 
-                    (_,loss) = net.train(bs,ms,vs,fs)
+                    _,loss = net.train(bs,ms,vs,fs)
                     print(loss)
             
-            bs,fs,ms,vs = sample(total_dataset)
-            
-            net.generate_summary(bs,fs,ms,vs,test(net,200))
+                bs,fs,ms,vs = sample(total_dataset)
                 
-            total_runs+=1
+                net.generate_summary(bs,ms,vs,fs,test(net,200),total_runs)
+                    
+                total_runs+=1
 
-            #if test_training() or total_runs<3:
-            print("UPDATING")
-            net.saver.save(net.sess,'./Models/model.ckpt')
-            net.saver.restore(net.live_sess,'./Models/model.ckpt')
+                #if test_training() or total_runs<3:
+                print("UPDATING")
+                net.saver.save(net.sess,'./Models/model.ckpt')
+                net.saver.restore(net.live_sess,'./Models/model.ckpt')
 
         #if run%500 == 0:
         

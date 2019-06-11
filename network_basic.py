@@ -80,18 +80,21 @@ y_target = tf.placeholder(tf.float32,[None,M*M])
 value_target = tf.placeholder(tf.float32,[None,1])
 train_target = tf.placeholder(tf.float32,[None,M*M])
 
-true_loss = tf.nn.l2_loss(y_target-probs) + tf.nn.l2_loss(value-value_target)
+value_loss = tf.nn.l2_loss(value-value_target)
+probs_loss = tf.nn.l2_loss(y_target-probs)
+true_loss = value_loss + probs_loss
 regularization = tf.reduce_sum([tf.nn.l2_loss(x)for x in tf.global_variables()])*0.001
 loss = true_loss + regularization
 
-loss_summary = tf.summary.scalar('loss', true_loss)
+value_loss_summary = tf.summary.scalar('value loss', value_loss)
+probs_loss_summary = tf.summary.scalar('probs loss', probs_loss)
 regularization_summary = tf.summary.scalar('regularization',regularization)
 win_ratio_ph = tf.placeholder(tf.float32,shape=None, name='accuracy_summary')
 win_ratio_summary = tf.summary.scalar('win ratio', win_ratio_ph)
 
-performance_summaries = tf.summary.merge([loss_summary,regularization_summary,win_ratio_summary])
+performance_summaries = tf.summary.merge([value_loss_summary,probs_loss_summary,regularization_summary,win_ratio_summary])
 
-opt = tf.train.AdamOptimizer(0.001)
+opt = tf.train.AdamOptimizer(0.0001)
 train_opt = opt.minimize(loss)
 
 config = tf.ConfigProto()
@@ -106,7 +109,7 @@ live_sess = tf.Session(config = config)
 
 saver = tf.train.Saver()
 
-tf.set_random_seed(2)
+tf.set_random_seed(3)
 sess.run(tf.global_variables_initializer())
 
 if RESET:
@@ -136,9 +139,9 @@ def train(boards, ys,values, masks,sess = sess):
     boards = np.concatenate([np.concatenate([np.reshape(convert(b),[1,M,M,2]) for b in boards]),masks],3)
     #print(boards)
     values = np.concatenate([np.reshape(np.array(m),[1,1]) for m in values])
-    sess.run(train_opt,feed_dict={x:np.reshape(boards,[-1,M*M*3]),value_target:values, y_target:target})
+    return sess.run([train_opt,loss],feed_dict={x:np.reshape(boards,[-1,M*M*3]),value_target:values, y_target:target})
 
-def generate_summary(boards, ys,values, masks, win_ratio, sess=sess):
+def generate_summary(boards, ys, values, masks, win_ratio, epoch, sess=sess):
     masks = np.concatenate([np.reshape(m,[1,M,M,1])for m in masks])
     target = np.concatenate([np.reshape(y,[1,M*M]) for y in ys])
     boards = np.concatenate([np.concatenate([np.reshape(convert(b),[1,M,M,2]) for b in boards]),masks],3)
