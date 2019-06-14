@@ -11,7 +11,7 @@ from time import sleep
 #####################################################
 
 M = 8
-tries = 5
+tries = 25
 batch = 64
 choose_best_prob = 0.9
 
@@ -250,7 +250,7 @@ class Worker:
                 fields[move[0]][move[1]][0] = 1
         return fields
 
-    def generateMoveProbs(self,board, player, debug = False):
+    def generateMoveProbs(self,board, player, debug = False,local = False):
         moves = board.moves(player)
         b = copyboard(board.board)
         if player == 1:
@@ -275,7 +275,8 @@ class Worker:
                         res += 'o'
                 print(res)
         
-        probs, value = self.run_net_async(b,self.generate_playable_fields(moves))
+        if not local:
+            probs, value = self.run_net_async(b,self.generate_playable_fields(moves))
         #print(probs)
         #print(value)
         ps = []
@@ -747,7 +748,7 @@ def train():
 
         #if run%500 == 0:
     
-test_with_montecarlo()
+#test_with_montecarlo()
 simple_test()
 
 #train()
